@@ -1,0 +1,4 @@
+beautifulsoup4
+lxml
+music21
+pretty_midi
