@@ -1,4 +1,4 @@
-# Score Transformer
+# Score Transformer (fork)
 
 This is the official repository for "Score Transformer" (ACM Multimedia Asia 2021 / ISMIR2021 LBD).
 
