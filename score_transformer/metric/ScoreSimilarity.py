@@ -1,4 +1,5 @@
 from enum import IntEnum
+from typing import List, Tuple
 import music21
 import numpy as np
 from numba import jit
@@ -17,7 +18,6 @@ class ScoreErrors(IntEnum):
     Tie = 9 # added
     StaffAssignment = 10
     Voice = 11 # added
-
 
 
 def score_alignment(score_a, score_b):
@@ -57,11 +57,11 @@ def score_alignment(score_a, score_b):
 
     @jit(nopython=True, cache=True)
     def costMatrix(s: np.ndarray, t: np.ndarray) -> np.ndarray:
-        d = np.zeros((len(s) + 1, len(t) + 1))
+        d = np.zeros((s.shape[0] + 1, t.shape[0] + 1))
         d[1:, 0] = np.inf
         d[0, 1:] = np.inf
-        for j in range(len(t)):
-            for i in range(len(s)):
+        for j in range(t.shape[0]):
+            for i in range(s.shape[0]):
                 d[i + 1, j + 1] = min(d[i, j + 1], d[i + 1, j], d[i, j]) + np.bitwise_xor(s[i], t[j]).sum()
                 # d[i + 1, j + 1] = np.bitwise_xor(s[i], t[j]).sum()
         return d
@@ -141,7 +141,7 @@ def score_similarity(estScore: music21.stream.Score, gtScore: music21.stream.Sco
         # Classes to consider
         CLASSES = (music21.bar.Barline, music21.note.Note, music21.chord.Chord)
 
-        def convertStreamToList(s, hand):
+        def convertStreamToList(s, hand) -> List[Tuple[float, Tuple[int, music21.base.Music21Object]]]:
             elements_with_offsets = {}
             for el in s.recurse():
                 if isinstance(el, CLASSES):
@@ -166,10 +166,10 @@ def score_similarity(estScore: music21.stream.Score, gtScore: music21.stream.Sco
 
         for i, part in enumerate(parts):
             if i not in partMapping:
+                # All notes for both scores will be merged into the top staff later
                 topStaffList += convertStreamToList(flattenStream(part), 0)
                 validParts = False
-                continue
-            if partMapping[i] == "right":
+            elif partMapping[i] == "right":
                 topStaffList += convertStreamToList(flattenStream(part), 0)
             else:
                 bottomStaffList += convertStreamToList(flattenStream(part), 1)
@@ -204,7 +204,8 @@ def score_similarity(estScore: music21.stream.Score, gtScore: music21.stream.Sco
                     elList.append(tEl[1] + bEl[1])
                     tEl = next(tIterator, None)
                     bEl = next(bIterator, None)
-        elTimes, elList = zip(*sorted(zip(elTimes, elList), key=lambda x: x[0]))
+        if elTimes and elList:
+            elTimes, elList = zip(*sorted(zip(elTimes, elList), key=lambda x: x[0]))
 
         return np.array(elTimes), elList, validParts
 
@@ -218,23 +219,16 @@ def score_similarity(estScore: music21.stream.Score, gtScore: music21.stream.Sco
             object is a music21 object
 
         Return value:
-            a tuple with the numbers of objects in the set (see definition of errors below)
+            the numbers of objects in the set
         """
 
-        errors = np.zeros((len(ScoreErrors.__members__)), int)
-
+        count = 0
         for obj in a_set:
             if isinstance(obj[1], music21.note.Note):
-                errors[ScoreErrors.NoteDeletion] += 1
+                count += 1
             elif isinstance(obj[1], music21.chord.Chord):
-                errors[ScoreErrors.NoteDeletion] += len(obj[1].pitches)
-        #     if isinstance(obj[1], (music21.stream.Measure, music21.bar.Barline, music21.clef.Clef, \
-        #                             music21.key.Key, music21.key.KeySignature, music21.meter.TimeSignature)):
-        #         pass
-            # else:
-            #     print('Class not found:', type(obj[1]))
-
-        return errors
+                count += len(obj[1].pitches)
+        return count
 
     def compareSets(a_set, b_set):
         """Compare two sets of concurrent musical objects.
@@ -291,7 +285,7 @@ def score_similarity(estScore: music21.stream.Score, gtScore: music21.stream.Sco
                 if aObj.numerator == bObj.numerator and aObj.beatCount == bObj.beatCount:
                     return True
             if isinstance(aObj, music21.note.Note):
-                if aObj.pitch == bObj.pitch and abs(aObj.duration.quarterLength - bObj.duration.quarterLength) < 1e-3 and aObj.stemDirection == bObj.stemDirection:
+                if aObj.pitch == bObj.pitch and abs(aObj.duration.quarterLength - bObj.duration.quarterLength) < 1e-3:# and aObj.stemDirection == bObj.stemDirection:
                     return True
             return False
 
@@ -323,7 +317,7 @@ def score_similarity(estScore: music21.stream.Score, gtScore: music21.stream.Sco
         a = a_set.copy()
         b = b_set.copy()
 
-        # We filter a and b by removing matches from b, and building a new a that does not include the matches
+        # We filter a and b by removing matches from b, and building a new 'a' that does not include the matches
         a_temp = []
         for pair in a:
             for bPair in b:
@@ -350,7 +344,6 @@ def score_similarity(estScore: music21.stream.Score, gtScore: music21.stream.Sco
         a_temp = []
         for obj in a:
             if isinstance(obj[1], music21.note.Note):
-                found = False
                 for bObj in b:
                     if isinstance(bObj[1], music21.note.Note) and bObj[1].pitch == obj[1].pitch:
                         if bObj[0] != obj[0]:
@@ -375,9 +368,8 @@ def score_similarity(estScore: music21.stream.Score, gtScore: music21.stream.Sco
                             #     errors[ScoreErrors.Voice] += 1
 
                         b.remove(bObj)
-                        found = True
                         break
-                if not found:
+                else:
                     a_temp.append(obj)
             else:
                 a_temp.append(obj)
@@ -416,13 +408,8 @@ def score_similarity(estScore: music21.stream.Score, gtScore: music21.stream.Sco
             else:
                 a_temp.append(obj)
         a = a_temp
-        # print("C", len(a), [n.offset for _, n in a], len(b), [n.offset for _, n in b])
-
-        aErrors = countObjects(a)
-        bErrors = countObjects(b)
-
-        errors += bErrors
-        errors[ScoreErrors.NoteInsertion] = aErrors[ScoreErrors.NoteDeletion]
+        errors[ScoreErrors.NoteInsertion] = countObjects(a)
+        errors[ScoreErrors.NoteDeletion] += countObjects(b)
         return errors
 
     def getSet(elements, times, start, end):

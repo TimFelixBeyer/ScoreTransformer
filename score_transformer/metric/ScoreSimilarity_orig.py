@@ -1,24 +1,30 @@
+# from https://github.com/suzuqn/ScoreTransformer/blob/main/metric/ScoreSimilarity.py
+
 import music21
 import numpy as np
 from enum import IntEnum
+import copy
+import itertools
 
 
 class ScoreErrors(IntEnum):
-    Barline = 0
-    Clef = 1
-    KeySignature = 2
-    TimeSignature = 3
-    Note = 4
+    Clef = 0
+    KeySignature = 1
+    TimeSignature = 2
+    NoteDeletion = 3
+    NoteInsertion = 4
     NoteSpelling = 5
     NoteDuration = 6
     StemDirection = 7
-    Grouping = 8
-    Rest = 9
-    RestDuration = 10
-    StaffAssignment = 11
+    Beams = 8 # added
+    Tie = 9 # added
+    RestInsertion = 10
+    RestDeletion = 11
+    RestDuration = 12
+    StaffAssignment = 13
+    Voice = 14 # added
 
-
-def score_alignment(aScore, bScore):
+def scoreAlignment(aScore, bScore):
     """Compare two musical scores.
 
     Parameters:
@@ -66,7 +72,20 @@ def score_alignment(aScore, bScore):
                     currentList = getPitches(el)
             return aList
 
-        aList = convertStreamToList(aScore.flat.notes)
+        def flattenStream(aStream):
+            newStream = music21.stream.Stream()
+            for el in aStream.recurse():
+                if isinstance(el, music21.note.Note) or isinstance(el, music21.chord.Chord):
+                    newStream.insert(el.getOffsetInHierarchy(aStream), el)
+            return newStream
+
+        # aList = convertStreamToList(aScore.flat.notes)
+
+        # added
+        parts = aScore.getElementsByClass([music21.stream.PartStaff, music21.stream.Part])
+        flat_notes = sorted(itertools.chain.from_iterable([flattenStream(part).elements for part in parts]), key=lambda x:x.offset)
+        aList = convertStreamToList(flat_notes)
+
         return aList
 
     def compareSets(aSet, bSet):
@@ -119,7 +138,7 @@ def score_alignment(aScore, bScore):
 
         return d
 
-    # score_alignment
+    # scoreAlignment
     aList = convertScoreToListOfPitches(aScore)
     bList = convertScoreToListOfPitches(bScore)
     d = costMatrix(aList, bList)
@@ -142,7 +161,8 @@ def score_alignment(aScore, bScore):
     return path, d
 
 
-def score_similarity(estScore, gtScore):
+
+def scoreSimilarity(estScore, gtScore, partMapping={0: "right", 1: "left"}):
     """Compare two musical scores.
 
     Parameters:
@@ -182,13 +202,11 @@ def score_similarity(estScore, gtScore):
         """
 
         # Classes to consider
-        CLASSES = [music21.bar.Barline, music21.note.Note, music21.note.Rest,
-                   music21.chord.Chord]
+        CLASSES = [music21.note.Note, music21.chord.Chord] #, music21.note.Rest]
 
-        nSymbols = 0
-        for el in aScore.recurse():
-            if isInstanceOfClasses(el, CLASSES):
-                nSymbols += 1
+        nSymbols = {'n_' + cls.__name__: sum([len(el.notes) if cls == music21.chord.Chord else 1
+                                    for el in aScore.recurse() if isinstance(el, cls)])
+                    for cls in CLASSES}
 
         return nSymbols
 
@@ -206,9 +224,7 @@ def score_similarity(estScore, gtScore):
         """
 
         # Classes to consider
-        CLASSES = [music21.bar.Barline, music21.clef.Clef,
-                   music21.key.Key, music21.meter.TimeSignature, music21.note.Note, music21.note.Rest,
-                   music21.chord.Chord]
+        CLASSES = [music21.bar.Barline, music21.note.Note, music21.chord.Chord] #music21.note.Rest,
 
         def convertStreamToList(aStream, staff):
             aList = []
@@ -240,8 +256,20 @@ def score_similarity(estScore, gtScore):
                 return None
 
         parts = aScore.getElementsByClass([music21.stream.PartStaff, music21.stream.Part])  # get staves
-        topStaffList = convertStreamToList(flattenStream(parts[0]), 0)
-        bottomStaffList = convertStreamToList(flattenStream(parts[1]), 1)
+        topStaffList = []
+        bottomStaffList = []
+        validParts = True
+
+        for i, part in enumerate(parts):
+            if i not in partMapping:
+                topStaffList += convertStreamToList(flattenStream(part), 0)
+                validParts = False
+                continue
+            if partMapping[i] == "right":
+                topStaffList += convertStreamToList(flattenStream(part), 0)
+            else:
+                bottomStaffList += convertStreamToList(flattenStream(part), 1)
+
 
         aList = []
         tIterator = iter(topStaffList)
@@ -268,7 +296,7 @@ def score_similarity(estScore, gtScore):
                     tEl = getNext(tIterator)
                     bEl = getNext(bIterator)
 
-        return aList
+        return aList, validParts
 
     def countObjects(aSet):
         """Count objects in a set
@@ -287,20 +315,15 @@ def score_similarity(estScore, gtScore):
         errors = np.zeros((len(ScoreErrors.__members__)), int)
 
         for obj in aSet:
-            if isinstance(obj[1], music21.stream.Measure) or isinstance(obj[1], music21.bar.Barline):
-                errors[ScoreErrors.Barline] += 1
-            elif isinstance(obj[1], music21.clef.Clef):
-                errors[ScoreErrors.Clef] += 1
-            elif isinstance(obj[1], music21.key.Key):
-                errors[ScoreErrors.KeySignature] += 1
-            elif isinstance(obj[1], music21.meter.TimeSignature):
-                errors[ScoreErrors.TimeSignature] += 1
+            if isinstance(obj[1], (music21.stream.Measure, music21.bar.Barline, music21.clef.Clef, \
+                                    music21.key.Key, music21.key.KeySignature, music21.meter.TimeSignature)):
+                pass
             elif isinstance(obj[1], music21.note.Note):
-                errors[ScoreErrors.Note] += 1
+                errors[ScoreErrors.NoteDeletion] += 1
             elif isinstance(obj[1], music21.chord.Chord):
-                errors[ScoreErrors.Note] += len(obj[1].pitches)
+                errors[ScoreErrors.NoteDeletion] += len(obj[1].pitches)
             elif isinstance(obj[1], music21.note.Rest):
-                errors[ScoreErrors.Rest] += 1
+                errors[ScoreErrors.RestDeletion] += 1
             else:
                 print('Class not found:', type(obj[1]))
 
@@ -356,28 +379,36 @@ def score_similarity(estScore, gtScore):
 
             """
             newSet = []
-            chords = 0
+            chordSet = [] # added
+            numChords = 0
             for obj in aSet:
                 if isinstance(obj[1], music21.chord.Chord):
-                    chords += 1
-                    for pitch in obj[1].pitches:
-                        newNote = music21.note.Note()
-                        newNote.offset = obj[1].offset
-                        newNote.pitch = pitch
-                        newNote.duration = obj[1].duration
-                        newNote.stemDirection = obj[1].getStemDirection(pitch)
-                        newSet.append((obj[0], newNote))
+                    numChords += 1
+                    for note in obj[1]: # added
+                        if not note.containerHierarchy:
+                            note.containerHierarchy = obj[1].containerHierarchy
+                        if not note.contextSites:
+                            note.contextSites = obj[1].contextSites
+                        if note.stemDirection == 'unspecified':
+                            note.stemDirection = obj[1].stemDirection
+
+                        # newNote = copy.deepcopy(note)
+                        newSet.append((obj[0], note))
+                    chordSet.append(obj) # added
                 else:
                     newSet.append(obj)
 
-            return newSet, chords
+            return newSet, chordSet, numChords # modified
 
         def compareObj(aObj, bObj):
             # Compare Music 21 objects
+            if isinstance(aObj, music21.note.Note) or isinstance(aObj, music21.chord.Chord):
+                return False
             if aObj == bObj:
                 return True
             if type(aObj) != type(bObj):
-                return False
+                if not isinstance(aObj, music21.key.Key) and not isinstance(aObj, music21.key.KeySignature): # added
+                    return False
             if isinstance(aObj, music21.stream.Measure):
                 return True
             if isinstance(aObj, music21.bar.Barline):
@@ -385,20 +416,20 @@ def score_similarity(estScore, gtScore):
             if isinstance(aObj, music21.clef.Clef):
                 if type(aObj) == type(bObj):
                     return True
-            if isinstance(aObj, music21.key.Key):
+            if isinstance(aObj, music21.key.Key) or isinstance(aObj, music21.key.KeySignature): # mod
                 if aObj.sharps == bObj.sharps:
                     return True
             if isinstance(aObj, music21.meter.TimeSignature):
-                if aObj.numerator == bObj.numerator and aObj.beatCount == bObj.beatCount:
+                if aObj.numerator / aObj.beatCount == bObj.numerator / bObj.beatCount: # mod
                     return True
             if isinstance(aObj, music21.note.Note):
-                if aObj.pitch == bObj.pitch and aObj.duration == bObj.duration and aObj.stemDirection == bObj.stemDirection:
+                if aObj.pitch == bObj.pitch and aObj.duration == bObj.duration: #and aObj.stemDirection == bObj.stemDirection:
                     return True
             if isinstance(aObj, music21.note.Rest):
                 if aObj.duration == bObj.duration:
                     return True
             if isinstance(aObj, music21.chord.Chord):
-                if aObj.duration == bObj.duration and aObj.pitches == bObj.pitches and aObj.stemDirection == bObj.stemDirection:
+                if aObj.duration == bObj.duration and aObj.pitches == bObj.pitches:
                     return True
             return False
 
@@ -410,19 +441,38 @@ def score_similarity(estScore, gtScore):
                         return bPair
             return None
 
+        def comparePitch(aObj, bObj): # added
+            if isinstance(aObj, music21.note.Note):
+                return aObj.pitch == bObj.pitch
+            elif isinstance(aObj, music21.chord.Chord):
+                return set(aObj.pitches) == set(bObj.pitches)
+
+        def getBeams(noteObj): # added
+            return '_'.join(['-'.join([b.type, b.direction]) if b.direction else b.type for b in noteObj.beams])
+
+        def getTie(noteObj): # added
+            return noteObj.tie.type if noteObj.tie is not None else ''
+
+        def referClef(noteObj): # added
+            return noteObj.getContextByClass('Clef').name if noteObj.getContextByClass('Clef') is not None else ''
+
+        def referTimeSig(noteObj): # added
+            return noteObj.getContextByClass('TimeSignature').numerator / noteObj.getContextByClass('TimeSignature').denominator \
+                    if noteObj.getContextByClass('TimeSignature') is not None else ''
+
+        def referKeySig(noteObj): # added
+            keyObj = (noteObj.getContextByClass('Key') or noteObj.getContextByClass('KeySignature'))
+            return keyObj.sharps if keyObj else 0
+
+        def referVoice(noteObj): # added
+            return noteObj.getContextByClass('Voice').id if noteObj.getContextByClass('Voice') is not None else '1'
+
         errors = np.zeros((len(ScoreErrors.__members__)), int)
 
         a = aSet.copy()
         b = bSet.copy()
 
         # Remove matching pairs from both sets
-        # aTemp = []
-        # for obj in a:
-        #     if obj in b:
-        #         b.remove(obj)
-        #     else:
-        #         aTemp.append(obj)
-        # a = aTemp
         aTemp = []
         for pair in a:
             bPair = findObj(pair, b)
@@ -444,10 +494,8 @@ def score_similarity(estScore, gtScore):
                 aTemp.append(obj)
         a = aTemp
 
-        # Split chords and report grouping errors
-        a, aChords = splitChords(a)
-        b, bChords = splitChords(b)
-        errors[ScoreErrors.Grouping] += abs(aChords - bChords)
+        a, aChords, aNumChords = splitChords(a)
+        b, bChords, bNumChords = splitChords(b)
 
         # Find mismatches in notes
         aTemp = []
@@ -458,10 +506,25 @@ def score_similarity(estScore, gtScore):
                     if isinstance(bObj[1], music21.note.Note) and bObj[1].pitch == obj[1].pitch:
                         if bObj[0] != obj[0]:
                             errors[ScoreErrors.StaffAssignment] += 1
-                        if bObj[1].duration != obj[1].duration:
-                            errors[ScoreErrors.NoteDuration] += 1
-                        if bObj[1].stemDirection != obj[1].stemDirection:
-                            errors[ScoreErrors.StemDirection] += 1
+                        else: # added
+                            if bObj[1].duration != obj[1].duration:
+                                errors[ScoreErrors.NoteDuration] += 1
+                            if bObj[1].stemDirection != obj[1].stemDirection:
+                                errors[ScoreErrors.StemDirection] += 1
+
+                            if getBeams(bObj[1]) != getBeams(obj[1]): # added
+                                errors[ScoreErrors.Beams] += 1
+                            if getTie(bObj[1]) != getTie(obj[1]): # added
+                                errors[ScoreErrors.Tie] += 1
+                            # if referClef(bObj[1]) != referClef(obj[1]): # added
+                            #     errors[ScoreErrors.Clef] += 1
+                            # if referTimeSig(bObj[1]) != referTimeSig(obj[1]): # added
+                            #     errors[ScoreErrors.TimeSignature] += 1
+                            # if referKeySig(bObj[1]) != referKeySig(obj[1]): # added
+                            #     errors[ScoreErrors.KeySignature] += 1
+                            # if referVoice(bObj[1]) != referVoice(obj[1]): # added
+                            #     errors[ScoreErrors.Voice] += 1
+
                         b.remove(bObj)
                         found = True
                         break
@@ -497,6 +560,20 @@ def score_similarity(estScore, gtScore):
                         errors[ScoreErrors.NoteDuration] += 1
                     if b[idx][1].stemDirection != obj[1].stemDirection:
                         errors[ScoreErrors.StemDirection] += 1
+
+                    if getBeams(b[idx][1]) != getBeams(obj[1]): # added
+                        errors[ScoreErrors.Beams] += 1
+                    if getTie(b[idx][1]) != getTie(obj[1]): # added
+                        errors[ScoreErrors.Tie] += 1
+                    if referClef(b[idx][1]) != referClef(obj[1]): # added
+                        errors[ScoreErrors.Clef] += 1
+                    if referTimeSig(b[idx][1]) != referTimeSig(obj[1]): # added
+                        errors[ScoreErrors.TimeSignature] += 1
+                    if referKeySig(b[idx][1]) != referKeySig(obj[1]): # added
+                        errors[ScoreErrors.KeySignature] += 1
+                    if referVoice(b[idx][1]) != referVoice(obj[1]): # added
+                        errors[ScoreErrors.Voice] += 1
+
                     del b[idx]
                     errors[ScoreErrors.NoteSpelling] += 1
                 else:
@@ -505,8 +582,12 @@ def score_similarity(estScore, gtScore):
                 aTemp.append(obj)
         a = aTemp
 
-        errors += countObjects(a)
-        errors += countObjects(b)
+        aErrors = countObjects(a)
+        bErrors = countObjects(b)
+
+        errors += bErrors
+        errors[ScoreErrors.NoteInsertion] = aErrors[ScoreErrors.NoteDeletion]
+        errors[ScoreErrors.RestInsertion] = aErrors[ScoreErrors.RestDeletion]
 
         # print()
         # print('aSet =', aSet)
@@ -525,11 +606,11 @@ def score_similarity(estScore, gtScore):
                 set += aTuple[1]
         return set
 
-    # score_similarity
-    path, _ = score_alignment(estScore, gtScore)
+    # scoreSimilarity
+    path, _ = scoreAlignment(estScore, gtScore)
 
-    aList = convertScoreToList(estScore)
-    bList = convertScoreToList(gtScore)
+    aList, aValidParts = convertScoreToList(estScore)
+    bList, bValidParts = convertScoreToList(gtScore)
 
     nSymbols = countSymbols(gtScore)
 
@@ -541,61 +622,18 @@ def score_similarity(estScore, gtScore):
         if pair[0] != aEnd and pair[1] != bEnd:
             aEnd, bEnd = pair[0], pair[1]
             errors += compareSets(getSet(aList, aStart, aEnd), getSet(bList, bStart, bEnd))
+
             aStart, aEnd = aEnd, aEnd
             bStart, bEnd = bEnd, bEnd
         elif pair[0] == aEnd:
             bEnd = pair[1]
         else:
             aEnd = pair[0]
+
     errors += compareSets(getSet(aList, aStart, float('inf')), getSet(bList, bStart, float('inf')))
-    for aspect in [ScoreErrors.Note, ScoreErrors.NoteSpelling, ScoreErrors.NoteDuration, ScoreErrors.StemDirection,
-                   ScoreErrors.StaffAssignment, ScoreErrors.Grouping, ScoreErrors.Rest, ScoreErrors.RestDuration]:
-        errors[aspect] /= nSymbols
 
-    return errors
-
-if __name__ == "__main__":
-    #
-    # Evaluate dataset
-    #
-
-    from music21 import converter
-    import os
-    import numpy as np
-    import scipy.io as sio
-
-    METHODS = ['F', 'G', 'C', 'M']
-    METHODS_ORD = [2, 3, 0, 1]
-    BASEDIR = 'dataset'
-    N = 19
-    pieces = list(range(1,N+1))
-    gt = [None] * N
-    for piece in pieces:
-        filename = os.path.join(BASEDIR, 'K-' + str(piece) + '.mxl')
-        try:
-            gt[piece - 1] = converter.parse(filename)
-        except:
-            print("Can't load", filename)
-            pass
-
-    results = -np.ones((len(METHODS), N, len(ScoreErrors.__members__)))
-    for piece in pieces:
-        if gt[piece - 1] == None:
-            continue
-        for method in METHODS:
-            filename = os.path.join(BASEDIR, method + '-' + str(piece) + '.mxl')
-            try:
-                comparisonPiece = converter.parse(filename)
-                print(filename, end = ' ')
-                score = score_similarity(gt[piece - 1], comparisonPiece)
-                print(score)
-                results[METHODS_ORD[METHODS.index(method)], piece - 1, :] = score
-            except music21.converter.ConverterException:
-                pass
-            except Exception as err:
-                print(type(err), err)
-
-    print('Saving results to MAT file')
-    mat_results = {'results' : results}
-    sio.savemat('resultsWithAlignment', mat_results)
-    print('Done')
+    results = {k: int(v) for k, v in zip(ScoreErrors.__members__.keys(), errors)}
+    results.update(nSymbols)
+    if not (aValidParts and bValidParts):
+        results['StaffAssignment'] = None
+    return results
