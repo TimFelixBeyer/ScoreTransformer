@@ -2,7 +2,7 @@ from music21 import *
 
 # dictionary to change note names
 sharp_to_flat = {'C#': 'D-', 'D#': 'E-', 'F#': 'G-', 'G#': 'A-', 'A#': 'B-'}
-flat_to_sharp = {v: k for k, v in sharp_to_flat.items()}
+flat_to_sharp = {v:k for k, v in sharp_to_flat.items()}
 
 # translate note numbers into note names considering key signature
 def pitch_to_name(pitch_, key=key.KeySignature(0)):
@@ -15,7 +15,8 @@ def pitch_to_name(pitch_, key=key.KeySignature(0)):
             for k, v in flat_to_sharp.items():
                 name = name.replace(k, v)
         return name
-    return pitch_.replace('b', '-')
+    else:
+        return pitch_.replace('b', '-')
 
 # aggregate note(rest)-related tokens
 def aggr_note_token(tokens):
@@ -165,7 +166,7 @@ def append_beams(obj, beams):
         else:
             obj.beams.append(b)
 
-def tokens_to_part_staff(tokens, key_=0, start_voice=1):
+def tokens_to_PartStaff(tokens, key_=0, start_voice=1):
     tokens = concatenated_to_regular(tokens)
 
     p = stream.PartStaff()
@@ -247,8 +248,29 @@ def concatenated_to_regular(tokens):
             regular_tokens.append(t)
     return regular_tokens
 
+# build music21 Score object from a token sequnece (string)
+def tokens_to_score(string, voice_numbering=False):
+    R_str, L_str = split_R_L(string)
+    R_tokens = R_str.split()
+    L_tokens = L_str.split()
+    if voice_numbering:
+        r = tokens_to_PartStaff(R_tokens)
+        r_voices = max([len(m.voices) if m.hasVoices() else 1 for m in r])
+        l = tokens_to_PartStaff(L_tokens, start_voice=r_voices+1)
+    else:
+        r = tokens_to_PartStaff(R_tokens, start_voice=0)
+        l = tokens_to_PartStaff(L_tokens, start_voice=0)
 
-def split_r_l(string):
+    # add last barline
+    r.elements[-1].rightBarline = bar.Barline('regular')
+    l.elements[-1].rightBarline = bar.Barline('regular')
+
+    s = stream.Score()
+    g = layout.StaffGroup([r, l], symbol='brace', barTogether=True)
+    s.append([g, r, l])
+    return s
+
+def split_R_L(string):
     tokens = string.split()
     tokens = concatenated_to_regular(tokens)
 
@@ -259,29 +281,3 @@ def split_r_l(string):
         R = ' '.join(tokens[tokens.index('R')+1:])
         L = ''
     return R, L
-
-# build music21 Score object from a token sequence (string)
-def tokens_to_score(string, voice_numbering=False):
-    r_str, l_str = split_r_l(string)
-    r_tokens = r_str.split()
-    l_tokens = l_str.split()
-    if voice_numbering:
-        r = tokens_to_part_staff(r_tokens)
-        r_voices = max([len(m.voices) if m.hasVoices() else 1 for m in r])
-        l = tokens_to_part_staff(l_tokens, start_voice=r_voices+1)
-    else:
-        r = tokens_to_part_staff(r_tokens, start_voice=0)
-        l = tokens_to_part_staff(l_tokens, start_voice=0)
-
-    # add last barline
-    r.elements[-1].rightBarline = bar.Barline('regular')
-    l.elements[-1].rightBarline = bar.Barline('regular')
-    print([(n.offset, n) for n in r.flatten().notes[:10]])
-    print([(n.offset, n) for n in l.flatten().notes[:10]])
-
-    s = stream.Score()
-    g = layout.StaffGroup([r, l], symbol='brace', barTogether=True)
-    s.insert(0, r)
-    s.insert(0, l)
-    s.insert(0, g)
-    return s

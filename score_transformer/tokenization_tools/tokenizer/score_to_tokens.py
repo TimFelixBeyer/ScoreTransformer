@@ -65,6 +65,8 @@ def aggregate_notes(voice_notes):
 
 def note_to_tokens(note, divisions, note_name=True):
     """notes and rests"""
+    beam_translations = {'begin': 'start', 'end': 'stop', 'forward hook': 'partial-right', 'backward hook': 'partial-left'}
+
     if note.duration is None: # gracenote
         return []
 
@@ -91,6 +93,13 @@ def note_to_tokens(note, divisions, note_name=True):
 
     # len
     tokens.append(f'len_{duration_in_fraction}')
+
+    if note.stem:
+        tokens.append(f'stem_{note.stem.text}')
+
+    if note.beam:
+        beams = note.find_all('beam')
+        tokens.append('beam_' + '_'.join([beam_translations[b.text] if b.text in beam_translations else b.text for b in beams]))
 
     if note.tied:
         tokens.append('tie_' + note.tied.attrs['type'])
@@ -234,7 +243,8 @@ def MusicXML_to_tokens(mxl, note_name=True): # use this method
         try:
             with open(mxl, "r") as f:
                 soup = BeautifulSoup(f, 'lxml-xml', from_encoding='utf-8')
-        except UnicodeDecodeError:
+        except UnicodeDecodeError as e:
+            print(mxl, e)
             folder = uuid.uuid4()
             try:
                 with zipfile.ZipFile(mxl, 'r') as zip_ref:

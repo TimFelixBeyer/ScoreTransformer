@@ -1,5 +1,3 @@
-# from https://github.com/suzuqn/ScoreTransformer/blob/main/metric/ScoreSimilarity.py
-
 import music21
 import numpy as np
 from enum import IntEnum
@@ -162,7 +160,7 @@ def scoreAlignment(aScore, bScore):
 
 
 
-def scoreSimilarity(estScore, gtScore, partMapping={0: "right", 1: "left"}):
+def scoreSimilarity(estScore, gtScore):
     """Compare two musical scores.
 
     Parameters:
@@ -202,7 +200,7 @@ def scoreSimilarity(estScore, gtScore, partMapping={0: "right", 1: "left"}):
         """
 
         # Classes to consider
-        CLASSES = [music21.note.Note, music21.chord.Chord] #, music21.note.Rest]
+        CLASSES = [music21.note.Note, music21.chord.Chord, music21.note.Rest]
 
         nSymbols = {'n_' + cls.__name__: sum([len(el.notes) if cls == music21.chord.Chord else 1
                                     for el in aScore.recurse() if isinstance(el, cls)])
@@ -224,7 +222,7 @@ def scoreSimilarity(estScore, gtScore, partMapping={0: "right", 1: "left"}):
         """
 
         # Classes to consider
-        CLASSES = [music21.bar.Barline, music21.note.Note, music21.chord.Chord] #music21.note.Rest,
+        CLASSES = [music21.bar.Barline, music21.note.Note, music21.note.Rest, music21.chord.Chord]
 
         def convertStreamToList(aStream, staff):
             aList = []
@@ -256,20 +254,8 @@ def scoreSimilarity(estScore, gtScore, partMapping={0: "right", 1: "left"}):
                 return None
 
         parts = aScore.getElementsByClass([music21.stream.PartStaff, music21.stream.Part])  # get staves
-        topStaffList = []
-        bottomStaffList = []
-        validParts = True
-
-        for i, part in enumerate(parts):
-            if i not in partMapping:
-                topStaffList += convertStreamToList(flattenStream(part), 0)
-                validParts = False
-                continue
-            if partMapping[i] == "right":
-                topStaffList += convertStreamToList(flattenStream(part), 0)
-            else:
-                bottomStaffList += convertStreamToList(flattenStream(part), 1)
-
+        topStaffList = convertStreamToList(flattenStream(parts[0]), 0)
+        bottomStaffList = convertStreamToList(flattenStream(parts[1]), 1) if len(parts) == 2 else []
 
         aList = []
         tIterator = iter(topStaffList)
@@ -296,7 +282,7 @@ def scoreSimilarity(estScore, gtScore, partMapping={0: "right", 1: "left"}):
                     tEl = getNext(tIterator)
                     bEl = getNext(bIterator)
 
-        return aList, validParts
+        return aList
 
     def countObjects(aSet):
         """Count objects in a set
@@ -423,7 +409,7 @@ def scoreSimilarity(estScore, gtScore, partMapping={0: "right", 1: "left"}):
                 if aObj.numerator / aObj.beatCount == bObj.numerator / bObj.beatCount: # mod
                     return True
             if isinstance(aObj, music21.note.Note):
-                if aObj.pitch == bObj.pitch and aObj.duration == bObj.duration: #and aObj.stemDirection == bObj.stemDirection:
+                if aObj.pitch == bObj.pitch and aObj.duration == bObj.duration and aObj.stemDirection == bObj.stemDirection:
                     return True
             if isinstance(aObj, music21.note.Rest):
                 if aObj.duration == bObj.duration:
@@ -516,14 +502,14 @@ def scoreSimilarity(estScore, gtScore, partMapping={0: "right", 1: "left"}):
                                 errors[ScoreErrors.Beams] += 1
                             if getTie(bObj[1]) != getTie(obj[1]): # added
                                 errors[ScoreErrors.Tie] += 1
-                            # if referClef(bObj[1]) != referClef(obj[1]): # added
-                            #     errors[ScoreErrors.Clef] += 1
-                            # if referTimeSig(bObj[1]) != referTimeSig(obj[1]): # added
-                            #     errors[ScoreErrors.TimeSignature] += 1
-                            # if referKeySig(bObj[1]) != referKeySig(obj[1]): # added
-                            #     errors[ScoreErrors.KeySignature] += 1
-                            # if referVoice(bObj[1]) != referVoice(obj[1]): # added
-                            #     errors[ScoreErrors.Voice] += 1
+                            if referClef(bObj[1]) != referClef(obj[1]): # added
+                                errors[ScoreErrors.Clef] += 1
+                            if referTimeSig(bObj[1]) != referTimeSig(obj[1]): # added
+                                errors[ScoreErrors.TimeSignature] += 1
+                            if referKeySig(bObj[1]) != referKeySig(obj[1]): # added
+                                errors[ScoreErrors.KeySignature] += 1
+                            if referVoice(bObj[1]) != referVoice(obj[1]): # added
+                                errors[ScoreErrors.Voice] += 1
 
                         b.remove(bObj)
                         found = True
@@ -609,8 +595,8 @@ def scoreSimilarity(estScore, gtScore, partMapping={0: "right", 1: "left"}):
     # scoreSimilarity
     path, _ = scoreAlignment(estScore, gtScore)
 
-    aList, aValidParts = convertScoreToList(estScore)
-    bList, bValidParts = convertScoreToList(gtScore)
+    aList = convertScoreToList(estScore)
+    bList = convertScoreToList(gtScore)
 
     nSymbols = countSymbols(gtScore)
 
@@ -634,6 +620,5 @@ def scoreSimilarity(estScore, gtScore, partMapping={0: "right", 1: "left"}):
 
     results = {k: int(v) for k, v in zip(ScoreErrors.__members__.keys(), errors)}
     results.update(nSymbols)
-    if not (aValidParts and bValidParts):
-        results['StaffAssignment'] = None
+
     return results
