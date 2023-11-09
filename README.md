@@ -11,6 +11,14 @@ Changes:
 
 Please note that this version requires a modified version of `music21`, which can be found here: https://github.com/TimFelixBeyer/music21
 
+## Usage
+
+```python
+from score_transformer import score_similarity
+print(score_similarity(path_a, path_b)
+```
+
+
 
 ## Old README:
 This is the official repository for "Score Transformer" (ACM Multimedia Asia 2021 / ISMIR2021 LBD).
