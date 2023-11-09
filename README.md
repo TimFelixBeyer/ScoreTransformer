@@ -2,12 +2,17 @@
 
 This is an upgraded implementation of the score similarity metric introduced in http://www.dollos.it/assets/pdf/ismir2017.pdf and further extended in https://arxiv.org/abs/2112.00355.
 
-We dramatically speed up the alignment procedure using numba and add additional features such as expressions and ornaments.
-Our implementation diverges slightly from the original paper in that we do note compute metrics for rests.
+Changes:
+- Sped up alignment procedure using `numba`
+- Added support for expressions and ornaments
+- Only compute metrics for notes (not rests)
+- Unroll repeats
+- Strip all ties
+
+Please note that this version requires a modified version of `music21`, which can be found here: https://github.com/TimFelixBeyer/music21
 
 
-
-## Old README below
+## Old README:
 This is the official repository for "Score Transformer" (ACM Multimedia Asia 2021 / ISMIR2021 LBD).
 
 [Paper](https://arxiv.org/abs/2112.00355) | [Short paper](https://archives.ismir.net/ismir2021/latebreaking/000032.pdf) | [Project page](https://score-transformer.github.io/)
