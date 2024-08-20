@@ -1,7 +1,0 @@
-README.md
-setup.py
-score_transformer/__init__.py
-score_transformer.egg-info/PKG-INFO
-score_transformer.egg-info/SOURCES.txt
-score_transformer.egg-info/dependency_links.txt
-score_transformer.egg-info/top_level.txt
