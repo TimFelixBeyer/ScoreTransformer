@@ -238,7 +238,7 @@ def measures_to_tokens(measures, soup, staff=None, note_name=True):
 
     return tokens
 
-def MusicXML_to_tokens(mxl, note_name=True): # use this method
+def MusicXML_to_tokens(mxl, note_name=True) -> list[str]:
     if type(mxl) is str:
         try:
             with open(mxl, "r") as f:

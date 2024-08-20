@@ -50,6 +50,7 @@ def score_alignment(score_a, score_b):
             path is a list of tuples containing pairs of matching offsets
             d is the alignment matrix
     """
+
     def score_to_pitch_offset_list(s):
         """Convert a piano score into a list of tuples containing pitches
 
@@ -75,7 +76,7 @@ def score_alignment(score_a, score_b):
         return np.array(offsets), np.array(pitches)
 
     @jit(nopython=True, cache=True)
-    def costMatrix(s: np.ndarray, t: np.ndarray) -> np.ndarray:
+    def cost_matrix(s: np.ndarray, t: np.ndarray) -> np.ndarray:
         d = np.zeros((s.shape[0] + 1, t.shape[0] + 1))
         d[1:, 0] = np.inf
         d[0, 1:] = np.inf
@@ -88,18 +89,18 @@ def score_alignment(score_a, score_b):
     offsets_b, pitches_b = score_to_pitch_offset_list(score_b)
     if not pitches_a.shape[0] or not pitches_b.shape[0]:
         return [(0, 0)]
-    d = costMatrix(pitches_a, pitches_b)
+    d = cost_matrix(pitches_a, pitches_b)
 
-    d_img = d
-    d_img[np.isinf(d_img)] = d_img[np.logical_not(np.isinf(d_img))].max()
-    d_img = (d_img / d_img.max() * 255).astype(np.uint8)
-
+    # Uncomment for alignment path visual
+    # d_img = d
+    # d_img[np.isinf(d_img)] = d_img[np.logical_not(np.isinf(d_img))].max()
+    # d_img = (d_img / d_img.max() * 255).astype(np.uint8)
 
     i, j = (d.shape[0] - 1, d.shape[1] - 1)
     path = []
     while i and j:
-        d_img[i-1, j-1] = 255
-        path.insert(0, (offsets_a[i-1], offsets_b[j-1]))
+        # d_img[i - 1, j - 1] = 255
+        path.insert(0, (offsets_a[i - 1], offsets_b[j - 1]))
 
         idx = np.argmin([d[i - 1, j], d[i, j - 1], d[i - 1, j - 1]])
         if idx == 0:
@@ -110,27 +111,38 @@ def score_alignment(score_a, score_b):
             i, j = i - 1, j - 1
     return path
 
-def score_similarity(estScore: stream.Score | str, gtScore: stream.Score | str, partMapping={0: "right", 1: "left"}):
+
+def score_similarity(
+    estScore: stream.Score | str,
+    gtScore: stream.Score | str,
+    partMapping={0: "right", 1: "left"},
+    full=False,
+) -> dict[str, float | int | None]:
     """Compare two musical scores.
 
     Parameters
     ----------
-    estScore: music21.stream.Score object of predicted piano score or path to its location.
-    gtScore: music21.stream.Score object of ground truth piano score or path to its location.
-
+    estScore: music21.stream.Score
+        Predicted piano score or path to its location.
+    gtScore: music21.stream.Score
+        Ground truth piano score or path to its location.
+    partMapping: dict[int, str]
+        A dictionary mapping part indices to hands. The keys are the part indices
+        (0-based) and the values are either "right" or "left".
+    full: bool
+        Whether to run a full comparison including all attributes or not.
+        Will run significantly faster if not full.
     Returns
     -------
-    Dict[str, float | int | None]: A dictionary containing the number of errors for each type of error.
-
+    Dict[str, float | int | None]:
+        A dictionary containing the number of errors for each type of error.
     """
     if isinstance(estScore, str):
-        estScore = converter.parse(estScore, forceSource=True)
+        estScore = converter.parse(estScore).expandRepeats().stripTies(preserveVoices=False)
     if isinstance(gtScore, str):
-        gtScore = converter.parse(gtScore, forceSource=True)
+        gtScore = converter.parse(gtScore).expandRepeats().stripTies(preserveVoices=False)
     assert isinstance(estScore, stream.Stream)
     assert isinstance(gtScore, stream.Stream)
-    estScore = estScore.expandRepeats().stripTies(preserveVoices=False)
-    gtScore = gtScore.expandRepeats().stripTies(preserveVoices=False)
 
 
     def score_to_list(aScore):
@@ -172,7 +184,9 @@ def score_similarity(estScore: stream.Score | str, gtScore: stream.Score | str, 
         # We only report staff/hand scores if we are sure which part corresponds to
         # which part
         validParts = True
-        parts = aScore.getElementsByClass([music21.stream.PartStaff, music21.stream.Part])
+        parts = aScore.getElementsByClass(
+            [music21.stream.PartStaff, music21.stream.Part]
+        )
         topStaffList = []
         bottomStaffList = []
 
@@ -257,8 +271,21 @@ def score_similarity(estScore: stream.Score | str, gtScore: stream.Score | str, 
             np.ndarray: An array with the differences between the two sets
                 (see definition of errors below)
         """
+        def pitchComp(pA, pB):
+            """Compare two pitches
+            In contrast to music21.pitch.Pitch.__eq__, this function allows
+            no accidental to match a natural accidental.
+            """
+            if (pA.octave == pB.octave) and (pA.step == pB.step) and (pA.microtone == pB.microtone):
+                if pA.accidental == pB.accidental:
+                    return True
+                if pA.accidental is None and getattr(pB.accidental, 'name', None) == 'natural':
+                    return True
+                if getattr(pA.accidental, 'name', None) == 'natural' and pB.accidental is None:
+                    return True
+            return False
 
-        def findEnharmonicEquivalent(note, s):
+        def findEnharmonicEquivalent(note, a_set):
             """Find the first enharmonic equivalent in a set
 
             Parameters
@@ -272,8 +299,8 @@ def score_similarity(estScore: stream.Score | str, gtScore: stream.Score | str, 
             -------
                 int: index of the first enharmonic equivalent of note in a_set -1 otherwise
             """
-            for i, (staff, obj) in enumerate(s):
-                if isinstance(obj, music21.note.Note) and obj.pitch.ps == note.pitch.ps:
+            for i, obj in enumerate(a_set):
+                if isinstance(obj[1], music21.note.Note) and obj[1].pitch.ps == note.pitch.ps:
                     return i
             return -1
 
@@ -297,9 +324,12 @@ def score_similarity(estScore: stream.Score | str, gtScore: stream.Score | str, 
             if type(aObj) != type(bObj):
                 return False
             if isinstance(aObj, music21.note.Note):
-                if (aObj.pitch == bObj.pitch
-                    and abs(aObj.duration.quarterLength - bObj.duration.quarterLength) < 1e-3
-                    and aObj.stemDirection == bObj.stemDirection):
+                if (
+                    pitchComp(aObj.pitch, bObj.pitch)
+                    and abs(aObj.duration.quarterLength - bObj.duration.quarterLength)
+                    < 1e-3
+                    and aObj.stemDirection == bObj.stemDirection
+                ):
                     return True
             if isinstance(aObj, music21.bar.Barline):
                 return True
@@ -308,7 +338,10 @@ def score_similarity(estScore: stream.Score | str, gtScore: stream.Score | str, 
             if isinstance(aObj, music21.clef.Clef):
                 return True
             if isinstance(aObj, music21.meter.TimeSignature):
-                if aObj.numerator == bObj.numerator and aObj.beatCount == bObj.beatCount:
+                if (
+                    aObj.numerator == bObj.numerator
+                    and aObj.beatCount == bObj.beatCount
+                ):
                     return True
             return False
 
@@ -337,13 +370,17 @@ def score_similarity(estScore: stream.Score | str, gtScore: stream.Score | str, 
 
         def get_time_sig(note_obj: music21.note.Note):
             context = note_obj.getContextByClass(music21.meter.TimeSignature)
-            return context.numerator / context.denominator \
-                    if context is not None else ''
+            return context.numerator / context.denominator if context else ""
 
         def get_trill(note_obj: music21.note.Note):
             if not hasattr(note_obj, 'expressions'):
                 return False
-            trills = (expressions.Trill, expressions.InvertedMordent, expressions.Mordent, expressions.Turn)
+            trills = (
+                expressions.Trill,
+                expressions.InvertedMordent,
+                expressions.Mordent,
+                expressions.Turn,
+            )
             return any(isinstance(e, trills) for e in note_obj.expressions)
 
         def get_voice(note_obj: music21.note.Note):
@@ -369,9 +406,6 @@ def score_similarity(estScore: stream.Score | str, gtScore: stream.Score | str, 
             if get_beams(a) != get_beams(b):
                 errors[ScoreErrors.Beams] += 1
 
-            if get_clef(a) != get_clef(b):
-                errors[ScoreErrors.Clef] += 1
-
             if get_grace(a):
                 if get_grace(b):
                     errors[ScoreErrors.GraceTP] += 1
@@ -382,9 +416,6 @@ def score_similarity(estScore: stream.Score | str, gtScore: stream.Score | str, 
                     errors[ScoreErrors.GraceFP] += 1
                 else:
                     errors[ScoreErrors.GraceTN] += 1
-
-            if get_key_sig(a) != get_key_sig(b):
-                errors[ScoreErrors.KeySignature] += 1
 
             if get_staccato(a):
                 if get_staccato(b):
@@ -400,9 +431,6 @@ def score_similarity(estScore: stream.Score | str, gtScore: stream.Score | str, 
             if get_tie(a) != get_tie(b):
                 errors[ScoreErrors.Tie] += 1
 
-            if get_time_sig(a) != get_time_sig(b):
-                errors[ScoreErrors.TimeSignature] += 1
-
             if get_trill(a):
                 if get_trill(b):
                     errors[ScoreErrors.TrillTP] += 1
@@ -414,12 +442,21 @@ def score_similarity(estScore: stream.Score | str, gtScore: stream.Score | str, 
                 else:
                     errors[ScoreErrors.TrillTN] += 1
 
-            if get_voice(a) != get_voice(b):
-                errors[ScoreErrors.Voice] += 1
+            # Only run slow checks if full is set to True
+            if full:
+                if get_clef(a) != get_clef(b):
+                    errors[ScoreErrors.Clef] += 1
+                if get_key_sig(a) != get_key_sig(b):
+                    errors[ScoreErrors.KeySignature] += 1
+                if get_time_sig(a) != get_time_sig(b):
+                    errors[ScoreErrors.TimeSignature] += 1
+                if get_voice(a) != get_voice(b):
+                    errors[ScoreErrors.Voice] += 1
 
 
         # Step 2: Find exact matches
-        # We filter a and b by removing matches from b, and building a new 'a' that does not include the matches
+        # We filter a and b by removing matches from b,
+        # and building a new 'a' that does not include the matches
         a_temp = []
         for pair in a:
             for bPair in b:
@@ -436,10 +473,13 @@ def score_similarity(estScore: stream.Score | str, gtScore: stream.Score | str, 
         for obj in a:
             if isinstance(obj[1], music21.note.Note):
                 for bObj in b:
-                    if isinstance(bObj[1], music21.note.Note) and bObj[1].pitch == obj[1].pitch:
+                    if (
+                        isinstance(bObj[1], music21.note.Note)
+                        and pitchComp(bObj[1].pitch, obj[1].pitch)
+                    ):
                         if bObj[0] != obj[0]:
                             errors[ScoreErrors.StaffAssignment] += 1
-                        else:
+                        else:  # TODO: probably remove the else, only left here for backwards compatibility
                             track_note_errors(bObj[1], obj[1])
                         b.remove(bObj)
                         break
@@ -448,7 +488,7 @@ def score_similarity(estScore: stream.Score | str, gtScore: stream.Score | str, 
             else:
                 a_temp.append(obj)
         a = a_temp
-        # # Find enharmonic equivalents and report spelling mistakes and duration mistakes
+        # Find enharmonic equivalents and report spelling mistakes and duration mistakes
         a_temp = []
         for obj in a:
             if isinstance(obj[1], music21.note.Note):
@@ -459,10 +499,8 @@ def score_similarity(estScore: stream.Score | str, gtScore: stream.Score | str, 
                     track_note_errors(b[idx][1], obj[1])
                     del b[idx]
                     errors[ScoreErrors.NoteSpelling] += 1
-                else:
-                    a_temp.append(obj)
-            else:
-                a_temp.append(obj)
+                    continue
+            a_temp.append(obj)
         a = a_temp
         errors[ScoreErrors.NoteInsertion] = count_objects(a)
         errors[ScoreErrors.NoteDeletion] += count_objects(b)
@@ -523,4 +561,123 @@ def score_similarity(estScore: stream.Score | str, gtScore: stream.Score | str, 
     results.update({"n_Note": len([n for n in gtScore.flatten().notes if not n.isRest])})
     if not (est_parts_valid and gt_parts_valid):
         results['StaffAssignment'] = None
+
+    results_relative = {}
+    n_notes = results["n_Note"]
+    n_matched = results["n_Note"] - results["NoteDeletion"]
+    for k, v in results.items():
+        if v is None:
+            results_relative[k] = None
+        elif k in ("n_Note",
+                 "TrillTP", "TrillFP", "TrillTN", "TrillFN", "TrillF1",
+                 "StaccatoTP", "StaccatoFP", "StaccatoTN", "StaccatoFN", "StaccatoF1",
+                 "GraceTP", "GraceFP", "GraceTN", "GraceFN", "GraceF1"):
+            results_relative[k] = v
+        elif k in ["NoteInsertion", "NoteDeletion"]:
+            results_relative[k] = v / (n_notes or 1e-9)
+        else:
+            results_relative[k] = v / (n_matched or 1e-9)
     return results
+
+
+def test_score_similarity_same():
+    score_path = (
+        "score_transformer/tokenization_tools/tokenizer/sample/input_score.musicxml"
+    )
+    expected = {
+        "Clef": 0,
+        "KeySignature": 0,
+        "TimeSignature": 0,
+        "NoteDeletion": 0,
+        "NoteInsertion": 0,
+        "NoteSpelling": 0,
+        "NoteDuration": 0,
+        "StemDirection": 0,
+        "Beams": 0,
+        "Tie": 0,
+        "StaffAssignment": 0,
+        "Voice": 0,
+        "TrillTP": 0,
+        "TrillFP": 0,
+        "TrillTN": 39,
+        "TrillFN": 0,
+        "StaccatoTP": 0,
+        "StaccatoFP": 0,
+        "StaccatoTN": 39,
+        "StaccatoFN": 0,
+        "GraceTP": 0,
+        "GraceFP": 0,
+        "GraceTN": 39,
+        "GraceFN": 0,
+        "TrillPrec": None,
+        "TrillRec": None,
+        "TrillF1": None,
+        "StaccatoPrec": None,
+        "StaccatoRec": None,
+        "StaccatoF1": None,
+        "GracePrec": None,
+        "GraceRec": None,
+        "GraceF1": None,
+        "n_Note": 39,
+    }
+    res = score_similarity(score_path, score_path, full=True)
+    assert res == expected
+
+
+def test_score_similarity_same_2():
+    from score_transformer import score_to_tokens
+    from score_transformer import tokens_to_score
+
+    score_path = (
+        "score_transformer/tokenization_tools/tokenizer/sample/input_score.musicxml"
+    )
+    # gen_path = "score_transformer/tokenization_tools/detokenizer/sample/generated_score.musicxml"
+    expected = {
+        "Clef": 0,
+        "KeySignature": 0,
+        "TimeSignature": 0,
+        "NoteDeletion": 0,
+        "NoteInsertion": 0,
+        "NoteSpelling": 0,
+        "NoteDuration": 0,
+        "StemDirection": 0,
+        "Beams": 0,
+        "Tie": 0,
+        "StaffAssignment": 0,
+        "Voice": 0,
+        "TrillTP": 0,
+        "TrillFP": 0,
+        "TrillTN": 39,
+        "TrillFN": 0,
+        "StaccatoTP": 0,
+        "StaccatoFP": 0,
+        "StaccatoTN": 39,
+        "StaccatoFN": 0,
+        "GraceTP": 0,
+        "GraceFP": 0,
+        "GraceTN": 39,
+        "GraceFN": 0,
+        "TrillPrec": None,
+        "TrillRec": None,
+        "TrillF1": None,
+        "StaccatoPrec": None,
+        "StaccatoRec": None,
+        "StaccatoF1": None,
+        "GracePrec": None,
+        "GraceRec": None,
+        "GraceF1": None,
+        "n_Note": 39,
+    }
+    res = score_similarity(
+        tokens_to_score(" ".join(score_to_tokens(score_path))), score_path
+    )
+    # assert res == expected
+
+def test_score_similarity_different():
+    res = score_similarity("/rhome/beyer/thesis/data/asap-dataset-master/Bach/Fugue/bwv_848/xml_score.musicxml", "/rhome/beyer/thesis/data/asap-dataset-master/Bach/Fugue/bwv_860/xml_score.musicxml")
+    print(res)
+
+if __name__ == "__main__":
+    test_score_similarity_same()
+    test_score_similarity_same_2()
+    test_score_similarity_different()

@@ -3,7 +3,7 @@
 This is an upgraded implementation of the score similarity metric introduced in http://www.dollos.it/assets/pdf/ismir2017.pdf and further extended in https://arxiv.org/abs/2112.00355.
 
 Changes:
-- Sped up alignment procedure using `numba`
+- Much faster alignment procedure using `numba`
 - Added support for expressions and ornaments
 - Only compute metrics for notes (not rests)
 - Unroll repeats
@@ -18,6 +18,22 @@ from score_transformer import score_similarity
 print(score_similarity(path_a, path_b)
 ```
 
+
+## Installation
+
+```bash
+pip install .
+```
+
+## Usage
+
+```python
+from score_transformer import score_similarity
+score_similarity("test1.musicxml", "test2.musicxml")
+# or
+import music21
+score_similarity(music21.converter.parse("test1.musicxml"), music21.converter.parse("test2.musicxml"))
+```
 
 
 ## Old README:
