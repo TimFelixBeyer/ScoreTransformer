@@ -138,9 +138,11 @@ def score_similarity(
         A dictionary containing the number of errors for each type of error.
     """
     if isinstance(estScore, str):
-        estScore = converter.parse(estScore).expandRepeats().stripTies(preserveVoices=False)
+        estScore = converter.parse(estScore, forceSource=True)
+    estScore = estScore.expandRepeats().stripTies(preserveVoices=False)
     if isinstance(gtScore, str):
-        gtScore = converter.parse(gtScore).expandRepeats().stripTies(preserveVoices=False)
+        gtScore = converter.parse(gtScore, forceSource=True)
+    gtScore = gtScore.expandRepeats().stripTies(preserveVoices=False)
     assert isinstance(estScore, stream.Stream)
     assert isinstance(gtScore, stream.Stream)
 
